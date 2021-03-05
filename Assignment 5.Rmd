@@ -1,0 +1,142 @@
+---
+title: "Spatial Analytics Assignment 5"
+author: "Johan Kresten Horsmans & Gustav Aarup Lauridsen"
+date: "3/4/2021"
+output: github_document
+---
+
+# Kazanlak Valley Analysis
+
+## Task 2: Where in the landscape are the mounds located?
+
+The location of settlements is usually easy to predict as humans need safety and easy access to water and food resources. These range from nearby arable soil to pasturage to trading centers. Choices regarding the mortuary realm are much harder to establish as they are guided by the social norms of the living rather than the natural environment. Some environmental conditions, however, play a role, such as intervisibility, which can be an important factor for societies that use monuments to the dead for territorial signalling. Before such specific analysis, it is, however, a good idea to get a general sense of where in the landscape are mounds located.
+
+In order to produce a formal assessment of mound location, you can start by using most common aspects of topography, such as elevation, slope, aspect, and water proximity. Choose one or more of these variables. Calculate the distribution of classes of each environmental variable through the entire region (defining, en route, what you consider to be a “region”?) by extracting values from the digital elevation model and binning them in several classes. Then, calculate site frequencies within classes of the environmental variable by sampling mound locations in the raster and evaluate whether the observed pattern could be a product of the distribution of environmental categories themselves.
+
+A example workflow with elevations could look like this:
+
+- extract elevation values from the entire landscape and bin them in elevation categories (e.g. 400-500m, 500-600m, 600-700m, etc.). Consider: what defines a landscape for the purpose of this study? You may wish to crop the Aster to a smaller but representative study area but make sure you justify your selection
+- extract elevation values from observed mound locations and review their distribution in the same bins
+- calculate the expected number of mounds per bin if mounds were located through the landscape randomly
+- compare the expected number with the observed one
+
+```{r}
+#Loading packages and setting a seed (to ensure reproducible results):
+library(pacman)
+p_load(sf, raster, dplyr, tmap, ggplot2)
+
+set.seed(123125)
+```
+
+#### We start off by loading the data:
+```{r}
+Aster <- raster("data/Aster.tif") #Loading raster containing heights of the landscape.
+mounds<-st_read("data/KAZ_mounds.shp") #loading raster containing burial mounds. 
+```
+
+#### We plot the loaded the data:
+```{r}
+tm_shape(Aster) + tm_raster() #Plotting heights.
+tm_shape(mounds) + tm_dots() #Plotting mounds.
+```
+
+
+#### We ensure that the two raster share the same CRS:
+```{r}
+crs(Aster)
+crs(mounds)
+```
+
+#### Since they share the same CRS, no transformation is needed. We then proceed to plot the mounds on top of the elevation raster:
+```{r}
+tm_shape(Aster) + 
+  tm_raster() + tm_shape(mounds) + tm_dots()
+```
+
+#### We see that the mounds are scattered across a very small part of the landscape. As such, we wish to crop the elevation raster to fit the locations of the mounds.
+```{r}
+#Converting the mound-points to a single multi-point object, named 'mounds1'.
+mounds1 <- st_union(mounds)
+
+#Inspect the mounds1-object to ensure that the transformation worked.
+head(mounds1)
+
+#Confirm that we went from 6 features to 1 feature (sanity check).
+length(mounds)
+length(mounds1)
+
+#Create a bounding box around the mounds.
+mounds_hull <- st_convex_hull(mounds1)
+
+#Plot the mounds on top of the hull to ensure that the transformation worked.
+plot(mounds_hull, col = "red")
+plot(mounds1, add = TRUE)
+```
+
+
+#### We proceed to crop the elevation raster:
+```{r}
+mounds_hull_trans <- as_Spatial(mounds_hull) #Converting the hull from a "sfc_POLYGON" to a "SpatialPolygon". 
+
+cropped_Aster <- crop(Aster, mounds_hull_trans) #Cropping the elevation raster.
+```
+
+#### Plotting the mounds on top of the cropped elevation raster:
+```{r}
+tm_shape(cropped_Aster) + 
+  tm_raster(title = "Elevations") + tm_shape(mounds) + tm_dots() + 
+  tm_layout(main.title = "Mound elevations", 
+          legend.title.size = 1,
+          legend.text.size = 0.6,
+          legend.position = c("left","bottom"),
+          legend.bg.color = "white")
+```
+
+#### Extracting the heights of the individual mounds:
+```{r}
+mounds_heights <- extract(cropped_Aster, mounds) %>% na.omit()
+
+#Ensuring that we haven't discarded any mounds (sanity check):
+length(st_geometry(mounds))
+length(mounds_heights)
+```
+
+We see that two mounds have been removed since they were NA's
+
+#### We then plot a histogram of the mound height distributions:
+```{r}
+hist(mounds_heights)
+```
+
+#### We change the breaks of the legend in the previous map to be more informative in realtion to the mound's elevations:
+```{r}
+tm_shape(cropped_Aster) + 
+  tm_raster(title = "Elevations", breaks=c(300, 350, 400, 450, 500, 550, 600)) + tm_shape(mounds) + tm_dots() + 
+  tm_layout(main.title = "Mound elevations",
+          legend.title.size = 1,
+          legend.text.size = 0.6,
+          legend.position = c("left","bottom"),
+          legend.bg.color = "white")
+```
+
+#### We wish to evaluate whether the mounds are scattered randomly accross heights. We do this by taking a sample of 771 heights from the environment and the doing a t-test between these heights and the heights of the mounds:
+```{r}
+Aster_samples <- sample(cropped_Aster, 771) #Sampling elevations.
+
+t.test(Aster_samples, mounds_heights) #Performing t-test,
+
+sd(mounds_heights) #Computing standard deviation for mounds.
+sd(Aster_samples) #Computing standard deviation for elevation raster samples.
+```
+
+The 771 mounds recorded, had an elevation of (M = 442.43, SD = 39.87) compared to the 771 randomly sampled elevations from the same raster (M = 447.66, SD = 141.31) showing no significant difference t(891.87) = 0.98913, p = 0.3229.
+
+#### We plot the distributions of the mound-elevations and the landscape elevations:
+```{r}
+elevations <- data.frame(elevation = c(mounds_heights, Aster_samples), dist = c(rep("mounds", 771),rep("samples", 771))) 
+
+ggplot(elevations,aes(x=elevation, fill=dist)) + geom_density(alpha=0.25)
+ggplot(elevations,aes(x=elevation, fill=dist)) + geom_histogram(alpha=0.25)
+```
+
+Although there was no significant difference between the sampled landscape elevations and the actual elevations of the mounds, we see that no mound was placed above ~ 650 meters, indicating that mounds in practice aren't scattered randomly as the t-test would suggest.
